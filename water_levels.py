@@ -1,3 +1,4 @@
+import cryptography
 from datetime import datetime, timedelta
 
 from sqlalchemy import engine
@@ -17,6 +18,7 @@ def open_db():
 
     windy_db = DBConnect(connection=connection)
     my_engine = windy_db.engine
+    DeclarativeBase.metadata.create_all(my_engine)
     return my_engine
 
 
@@ -56,7 +58,7 @@ class WaterLevelsDb(DeclarativeBase):
     id = Column(Integer, primary_key=True)
     station_id = Column(ForeignKey('stations.id', ondelete='CASCADE'), nullable=False, index=True)
     date_time = Column('date_time', DateTime)
-    predicted_wl = Column('predicted_wl', Numeric)
+    water_level = Column('water_level', Numeric)
 
     def __repr__(self):
         return "".format(self.code)
@@ -111,7 +113,7 @@ def put_water_levels():
             new_measure = WaterLevelsDb(
                 station_id=station_id,
                 date_time=date_time,
-                water_levels=row['water_levels'],
+                water_level=row['water_level'],
                 )
             # Добавляем запись
             session.add(new_measure)

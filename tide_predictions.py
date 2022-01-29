@@ -17,6 +17,7 @@ def open_db():
 
     windy_db = DBConnect(connection=connection)
     my_engine = windy_db.engine
+    DeclarativeBase.metadata.create_all(my_engine)
     return my_engine
 
 
@@ -98,6 +99,11 @@ def put_tide_predictions():
     the_engine = open_db()
     Session = sessionmaker(bind=the_engine)
     session = Session()
+
+    session.query(PredictionsDb).filter(
+        PredictionsDb.date_time <= today).delete(synchronize_session='fetch')
+    session.commit()
+
     stations_list = get_stations_from_db(session)
     # for every station from stations
     is_first_print = 0
