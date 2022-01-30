@@ -97,8 +97,8 @@ def put_water_levels():
         station = Station(station_id)
     #    get water level
         tide_data = station.get_data(
-            begin_date=past.strftime("%Y%m%d"),
-            end_date=today.strftime("%Y%m%d"),
+            begin_date=past.strftime("%Y%m%d %H:%M"),
+            end_date=today.strftime("%Y%m%d %H:%M"),
             product="water_level",
             # product="predictions",
             datum="MLLW",
@@ -107,6 +107,8 @@ def put_water_levels():
             # interval='h',
             application='Eugene_Mamontov',
             )
+        if tide_data.empty:
+            continue
 
         # put predictions to database
         for date_time, row in tide_data.iterrows():
@@ -120,7 +122,7 @@ def put_water_levels():
 
         print(tide_data.tail())
         is_first_print += 1
-        if is_first_print > 10:
+        if is_first_print >= 10:
             break
 
     session.commit()

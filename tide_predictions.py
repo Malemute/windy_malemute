@@ -100,8 +100,7 @@ def put_tide_predictions():
     Session = sessionmaker(bind=the_engine)
     session = Session()
 
-    session.query(PredictionsDb).filter(
-        PredictionsDb.date_time <= today).delete(synchronize_session='fetch')
+    session.query(PredictionsDb).filter(PredictionsDb.date_time <= today).delete(synchronize_session='fetch')
     session.commit()
 
     stations_list = get_stations_from_db(session)
@@ -113,8 +112,8 @@ def put_tide_predictions():
         station = Station(station_id)
     #    get water level
         tide_data = station.get_data(
-            begin_date=today.strftime("%Y%m%d"),
-            end_date=future.strftime("%Y%m%d"),
+            begin_date=today.strftime("%Y%m%d %H:%M"),
+            end_date=future.strftime("%Y%m%d %H:%M"),
             # product="water_level",
             product="predictions",
             datum="MLLW",
@@ -136,7 +135,7 @@ def put_tide_predictions():
 
         print(tide_data.tail())
         is_first_print += 1
-        if is_first_print > 10:
+        if is_first_print >= 10:
             break
 
     session.commit()

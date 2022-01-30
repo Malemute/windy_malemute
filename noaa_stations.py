@@ -419,9 +419,10 @@ class Station:
 
         # Case 3
         elif (num_request_blocks == 1) and ("error" in json_dict):
-            raise ValueError(
-                json_dict["error"].get("message", "Error retrieving data")
-            )
+            # raise ValueError(
+            #     json_dict["error"].get("message", "Error retrieving data")
+            # )
+            return df  # Return the empty DataFrame
 
         # Case 4
         else:
@@ -545,6 +546,9 @@ class Station:
                 # Get dataframe for block and append to time series df
                 df_new = self._url2pandas(data_url, product, num_31day_blocks)
                 df = df.append(df_new)
+
+        if df.empty:
+            return df
 
         # Rename output dataframe columns based on requested product
         # and convert to useable data types
