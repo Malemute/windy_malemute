@@ -76,17 +76,6 @@ def get_stations_from_db(session):
     return stations_list
 
 
-def connect_db():
-    connection = {'user': 'catchthewind_dev',
-                  'password': 'VJxoA7XUSbzRi5nQ',
-                  'host': '172.201.0.202',
-                  'port': '3306',
-                  'database': 'catchthewind_dev'}
-
-    db = DBConnect(connection=connection)
-    return db
-
-
 def put_tide_predictions():
 
     today = datetime.utcnow().replace(microsecond=0)
