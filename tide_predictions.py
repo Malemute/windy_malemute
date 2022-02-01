@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta
 
+import requests
+
 from sqlalchemy import engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import Column, ForeignKey, Integer, Numeric, String, DateTime
@@ -76,7 +78,13 @@ def get_stations_from_db(session):
     return stations_list
 
 
-def put_tide_predictions():
+def get_tide_predictions_from_noaa():
+    # http session for all the requests
+    with requests.Session() as requests_session:
+        put_tide_predictions(requests_session)
+
+
+def put_tide_predictions(requests_session):
 
     today = datetime.utcnow().replace(microsecond=0)
     # delta_past = timedelta(hours=1)
@@ -87,12 +95,12 @@ def put_tide_predictions():
     # open database
     the_engine = open_db()
     Session = sessionmaker(bind=the_engine)
-    session = Session()
+    session_db = Session()
 
-    session.query(PredictionsDb).filter(PredictionsDb.date_time <= today).delete(synchronize_session='fetch')
-    session.commit()
+    session_db.query(PredictionsDb).filter(PredictionsDb.date_time <= today).delete(synchronize_session='fetch')
+    session_db.commit()
 
-    stations_list = get_stations_from_db(session)
+    stations_list = get_stations_from_db(session_db)
     # for every station from stations
     is_first_print = 0
     for station_row in stations_list:
@@ -101,6 +109,7 @@ def put_tide_predictions():
         station = Station(station_id)
     #    get water level
         tide_data = station.get_data(
+            requests_session,
             begin_date=today.strftime("%Y%m%d %H:%M"),
             end_date=future.strftime("%Y%m%d %H:%M"),
             # product="water_level",
@@ -120,18 +129,18 @@ def put_tide_predictions():
                 predicted_wl=row['predicted_wl'],
                 )
             # Добавляем запись
-            session.add(new_pred)
+            session_db.add(new_pred)
 
         print(tide_data.tail())
         is_first_print += 1
-        if is_first_print >= 10:
+        if is_first_print >= 20:
             break
 
-    session.commit()
+    session_db.commit()
 
 
 if __name__ == "__main__":
 
     PREDICTION_DEPTH = 6
 
-    put_tide_predictions()
+    get_tide_predictions_from_noaa()

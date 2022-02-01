@@ -359,14 +359,14 @@ class Station:
 
         return query_url
 
-    def _url2pandas(self, data_url, product, num_request_blocks):
+    def _url2pandas(self, requests_session, data_url, product, num_request_blocks):
         """
         Takes in a provided URL using the NOAA CO-OPS API conventions
         (see https://tidesandcurrents.noaa.gov/api/) and converts the
         corresponding JSON data into a pandas dataframe.
         """
 
-        response = requests.get(data_url)  # Get JSON data from URL
+        response = requests_session.get(data_url)  # Get JSON data from URL
         json_dict = response.json()  # Create a dictionary from JSON data
 
         df = pd.DataFrame()  # Initialize a empty DataFrame
@@ -450,6 +450,7 @@ class Station:
 
     def get_data(
             self,
+            requests_session,
             begin_date,
             end_date,
             product,
@@ -503,7 +504,7 @@ class Station:
                 time_zone,
             )
 
-            df = self._url2pandas(data_url, product, num_request_blocks=1)
+            df = self._url2pandas(requests_session, data_url, product, num_request_blocks=1)
 
         # If the length of the user specified data request is greater than 365
         # days AND the product is hourly_height or high_low, we need to load
@@ -544,7 +545,7 @@ class Station:
                 )
 
                 # Get dataframe for block and append to time series df
-                df_new = self._url2pandas(data_url, product, num_31day_blocks)
+                df_new = self._url2pandas(requests_session, data_url, product, num_31day_blocks)
                 df = df.append(df_new)
 
         if df.empty:
