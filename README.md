@@ -14,7 +14,7 @@ predictions for 6 days from the current time with the 6 minutes interval for all
 
 ```bash
 
-$ python tide_predictions.py <incoming url> # possibly requires call of python3 executive instead of just python
+$ python tide_predictions.py # possibly requires call of python3 executive instead of just python
 
 ```
 
@@ -22,7 +22,7 @@ meaurements for 1 hour before the current time with the 6 minutes interval for a
 
 ```bash
 
-$ python water_levels.py # possibly requires call of python3 executive instead of just python
+$ python windy_bbox.py # possibly requires call of python3 executive instead of just python
 
 ```
 
