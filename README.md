@@ -22,7 +22,7 @@ meaurements for 1 hour before the current time with the 6 minutes interval for a
 
 ```bash
 
-$ python water_levels.py <incoming url> # possibly requires call of python3 executive instead of just python
+$ python water_levels.py # possibly requires call of python3 executive instead of just python
 
 ```
 
