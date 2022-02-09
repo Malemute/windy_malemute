@@ -1,555 +1,200 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 
-import math
 import pandas as pd
 from pandas import json_normalize
-import pymysql
 import requests
-from sqlalchemy import engine, insert
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy import create_engine, Column, ForeignKey, Integer, Numeric, String, DateTime
-from sqlalchemy.ext.declarative import declarative_base
-# import sys
-import zeep
+
+import windy_async
 
 
-class Station:
+def build_base_url(
+        begin_date,
+        end_date,
+        product="predictions",
+        datum="MLLW",
+        interval=None,
+        units="metric",
+        time_zone="gmt",
+        application='Eugene_Mamontov',
+):
     """
-    A class to access station data and metadata via the NOAA Tides & Currents
-    APIs.
-
-    For data retrieval API, see https://tidesandcurrents.noaa.gov/api/.
-    For metadata API, see: https://tidesandcurrents.noaa.gov/mdapi/latest/
-    For data inventory info, see: https://opendap.co-ops.nos.noaa.gov/axis/
+    Build an URL to be used to fetch data from the NOAA CO-OPS data API
+    (see https://tidesandcurrents.noaa.gov/api/)
     """
+    base_url = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?"
 
-    def __init__(self, stationid, units="metric"):
-        self.stationid = stationid
-        self.units = units
-        self.get_metadata(self.stationid)
-
-        try:
-            self.get_data_inventory(self.stationid)
-        except:  # noqa: E722
-            pass
-
-    def get_data_inventory(self, stationid):
-        """
-        Get data inventory for station with water level & meteoroligical data.
-        Data inventory is fetched from NOAA CO-OPS SOAP Web Services, see:
-        https://opendap.co-ops.nos.noaa.gov/axis/
-        """
-
-        wsdl = (
-            "https://opendap.co-ops.nos.noaa.gov/axis/webservices/"
-            "datainventory/wsdl/DataInventory.wsdl"
-        )
-        client = zeep.Client(wsdl=wsdl)
-        response = client.service.getDataInventory(str(self.stationid))[
-            "parameter"
-        ]
-        names = [x["name"] for x in response]
-        starts = [x["first"] for x in response]
-        ends = [x["last"] for x in response]
-
-        unique_names = []
-        for name in names:
-            if name not in unique_names: unique_names.append(name)
-
-        inventory_dict = {}
-        for name in unique_names:
-            idxs = [i for i, x in enumerate(names) if x == name]
-            inventory_dict[name] = {"start_date": [starts[i] for i in idxs][0], "end_date": [ends[i] for i in idxs][-1]}
-
-        self.data_inventory = inventory_dict
-
-    def get_metadata(self, stationid):
-        """
-        Build URL for metadata API request. When a Station object is
-        initialized, fill out metadata automatically.
-        """
-
-        metadata_base_url = (
-            "https://api.tidesandcurrents.noaa.gov/mdapi/"
-            "prod/webapi/stations/"
-        )
-        extension = ".json"
-        metadata_expand = (
-            "?expand=details,sensors,products,disclaimers,"
-            "notices,datums,harcon,tidepredoffets,benchmarks,"
-            "nearby,bins,deployments,currentpredictionoffsets,"
-            "floodlevels"
-        )
-        units_for_url = "?units=" + self.units
-        metadata_url = (
-                metadata_base_url
-                + str(self.stationid)
-                + extension
-                + metadata_expand
-                + units_for_url
-        )
-
-        # Get response from Metadata API
-        response = requests.get(metadata_url)
-        json_dict = response.json()
-        station_metadata = json_dict["stations"][0]
-
-        # Determine station type, then assign class attributes accordingly from
-        # metadata
-        if "datums" in station_metadata:  # if True --> water levels
-            self.metadata = station_metadata
-            self.affiliations = station_metadata["affiliations"]
-            self.benchmarks = station_metadata["benchmarks"]
-            self.datums = station_metadata["datums"]
-            # self.details = station_metadata['details']  # Only 4 water levels
-            self.disclaimers = station_metadata["disclaimers"]
-            self.flood_levels = station_metadata["floodlevels"]
-            self.greatlakes = station_metadata["greatlakes"]
-            self.tidal_constituents = station_metadata["harmonicConstituents"]
-            self.lat_lon = {
-                "lat": station_metadata["lat"],
-                "lon": station_metadata["lng"],
-            }
-            self.name = station_metadata["name"]
-            self.nearby_stations = station_metadata["nearby"]
-            self.notices = station_metadata["notices"]
-            self.observe_dst = station_metadata["observedst"]
-            self.ports_code = station_metadata["portscode"]
-            self.products = station_metadata["products"]
-            self.sensors = station_metadata["sensors"]
-            self.shef_code = station_metadata["shefcode"]
-            self.state = station_metadata["state"]
-            self.storm_surge = station_metadata["stormsurge"]
-            self.tidal = station_metadata["tidal"]
-            self.tide_type = station_metadata["tideType"]
-            self.timezone = station_metadata["timezone"]
-            self.timezone_corr = station_metadata["timezonecorr"]
-
-        elif "tidepredoffsets" in station_metadata:  # if True --> pred tide
-            self.metadata = station_metadata
-            self.state = station_metadata["state"]
-            self.tide_pred_offsets = station_metadata["tidepredoffsets"]
-            self.type = station_metadata["type"]
-            self.time_meridian = station_metadata["timemeridian"]
-            self.reference_id = station_metadata["reference_id"]
-            self.timezone_corr = station_metadata["timezonecorr"]
-            self.name = station_metadata["name"]
-            self.lat_lon = {
-                "lat": station_metadata["lat"],
-                "lon": station_metadata["lng"],
-            }
-            self.affiliations = station_metadata["affiliations"]
-            self.ports_code = station_metadata["portscode"]
-            self.products = station_metadata["products"]
-            self.disclaimers = station_metadata["disclaimers"]
-            self.notices = station_metadata["notices"]
-            self.tide_type = station_metadata["tideType"]
-
-        elif "bins" in station_metadata:  # if True --> currents
-            self.metadata = station_metadata
-            self.project = station_metadata["project"]
-            self.deployed = station_metadata["deployed"]
-            self.retrieved = station_metadata["retrieved"]
-            self.timezone_offset = station_metadata["timezone_offset"]
-            self.observe_dst = station_metadata["observedst"]
-            self.project_type = station_metadata["project_type"]
-            self.noaa_chart = station_metadata["noaachart"]
-            self.deployments = station_metadata["deployments"]
-            self.bins = station_metadata["bins"]
-            self.name = station_metadata["name"]
-            self.lat_lon = {
-                "lat": station_metadata["lat"],
-                "lon": station_metadata["lng"],
-            }
-            self.affiliations = station_metadata["affiliations"]
-            self.ports_code = station_metadata["portscode"]
-            self.products = station_metadata["products"]
-            self.disclaimers = station_metadata["disclaimers"]
-            self.notices = station_metadata["notices"]
-            self.tide_type = station_metadata["tideType"]
-
-        elif "currbin" in station_metadata:  # if True --> predicted currents
-            self.metadata = station_metadata
-            self.current_pred_offsets = station_metadata[
-                "currentpredictionoffsets"
-            ]
-            self.curr_bin = station_metadata["currbin"]
-            self.type = station_metadata["type"]
-            self.depth = station_metadata["depth"]
-            self.depth_type = station_metadata["depthType"]
-            self.name = station_metadata["name"]
-            self.lat_lon = {
-                "lat": station_metadata["lat"],
-                "lon": station_metadata["lng"],
-            }
-            self.affiliations = station_metadata["affiliations"]
-            self.ports_code = station_metadata["portscode"]
-            self.products = station_metadata["products"]
-            self.disclaimers = station_metadata["disclaimers"]
-            self.notices = station_metadata["notices"]
-            self.tide_type = station_metadata["tideType"]
-
-    def _build_query_url(
-            self,
-            begin_date,
-            end_date,
-            product,
-            datum=None,
-            bin_num=None,
-            interval=None,
-            units="metric",
-            time_zone="gmt",
-            application='Eugene_Mamontov',
-    ):
-        """
-        Build an URL to be used to fetch data from the NOAA CO-OPS data API
-        (see https://tidesandcurrents.noaa.gov/api/)
-        """
-        base_url = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?"
-
-        # If the data product is water levels, check that a datum is specified
-        if product == "water_level":
-            if datum is None:
-                raise ValueError(
-                    "No datum specified for water level data. See"
-                    " https://tidesandcurrents.noaa.gov/api/#datum "
-                    "for list of available datums"
-                )
-            else:
-                # Compile parameter string for use in URL
-                parameters = {
-                    "begin_date": begin_date,
-                    "end_date": end_date,
-                    "station": self.stationid,
-                    "product": product,
-                    "datum": datum,
-                    "units": units,
-                    "time_zone": time_zone,
-                    "application": application,
-                    "format": "json",
-                }
-
-        elif product == "hourly_height":
-            if datum is None:
-                raise ValueError(
-                    "No datum specified for water level data. See"
-                    " https://tidesandcurrents.noaa.gov/api/#datum "
-                    "for list of available datums"
-                )
-            else:
-                # Compile parameter string for use in URL
-                parameters = {
-                    "begin_date": begin_date,
-                    "end_date": end_date,
-                    "station": self.stationid,
-                    "product": product,
-                    "datum": datum,
-                    "units": units,
-                    "time_zone": time_zone,
-                    "application": application,
-                    "format": "json",
-                }
-        elif product == "high_low":
-            if datum is None:
-                raise ValueError(
-                    "No datum specified for water level data. See"
-                    " https://tidesandcurrents.noaa.gov/api/#datum "
-                    "for list of available datums"
-                )
-            else:
-                # Compile parameter string for use in URL
-                parameters = {
-                    "begin_date": begin_date,
-                    "end_date": end_date,
-                    "station": self.stationid,
-                    "product": product,
-                    "datum": datum,
-                    "units": units,
-                    "time_zone": time_zone,
-                    "application": application,
-                    "format": "json",
-                }
-
-        elif product == "predictions":
-            # If no interval provided, return 6-min predictions data
-            if interval is None:
-                # Compile parameter string for use in URL
-                parameters = {
-                    "begin_date": begin_date,
-                    "end_date": end_date,
-                    "station": self.stationid,
-                    "product": product,
-                    "datum": datum,
-                    "units": units,
-                    "time_zone": time_zone,
-                    "application": application,
-                    "format": "json",
-                }
-
-            else:
-                # Compile parameter string, including interval, for use in URL
-                parameters = {
-                    "begin_date": begin_date,
-                    "end_date": end_date,
-                    "station": self.stationid,
-                    "product": product,
-                    "datum": datum,
-                    "interval": interval,
-                    "units": units,
-                    "time_zone": time_zone,
-                    "application": application,
-                    "format": "json",
-                }
-
-        # If the data product is currents, check that a bin number is specified
-        elif product == "currents":
-            if bin_num is None:
-                raise ValueError(
-                    "No bin specified for current data. Bin info can be "
-                    "found on the station info page"
-                    " (e.g., https://tidesandcurrents.noaa.gov/cdata/StationInfo?id=PUG1515)"  # noqa
-                )
-            else:
-                # Compile parameter string for use in URL
-                parameters = {
-                    "begin_date": begin_date,
-                    "end_date": end_date,
-                    "station": self.stationid,
-                    "product": product,
-                    "bin": str(bin_num),
-                    "units": units,
-                    "time_zone": time_zone,
-                    "application": application,
-                    "format": "json",
-                }
-
-        # For all other data types (e.g., meteoroligcal conditions)
-        else:
-            # If no interval provided, return 6-min met data
-            if interval is None:
-                # Compile parameter string for use in URL
-                parameters = {
-                    "begin_date": begin_date,
-                    "end_date": end_date,
-                    "station": self.stationid,
-                    "product": product,
-                    "units": units,
-                    "time_zone": time_zone,
-                    "application": application,
-                    "format": "json",
-                }
-            else:
-                # Compile parameter string, including interval, for use in URL
-                parameters = {
-                    "begin_date": begin_date,
-                    "end_date": end_date,
-                    "station": self.stationid,
-                    "product": product,
-                    "interval": interval,
-                    "units": units,
-                    "time_zone": time_zone,
-                    "application": application,
-                    "format": "json",
-                }
-
-        # Build URL with requests library
-        query_url = (
-            requests.Request("GET", base_url, params=parameters).prepare().url
-        )
-
-        return query_url
-
-    def _url2pandas(self, requests_session, data_url, product, num_request_blocks):
-        """
-        Takes in a provided URL using the NOAA CO-OPS API conventions
-        (see https://tidesandcurrents.noaa.gov/api/) and converts the
-        corresponding JSON data into a pandas dataframe.
-        """
-
-        response = requests_session.get(data_url)  # Get JSON data from URL
-        json_dict = response.json()  # Create a dictionary from JSON data
-
-        df = pd.DataFrame()  # Initialize a empty DataFrame
-
-        # Error when the requested begin_date and/or end_date doesn't have data
-        large_data_gap_error = (
-            "No data was found. This product may not be "
-            "offered at this station at the "
-            "requested time."
-        )
-
-        # Handle .get_data() request size & errors from COOPS API, cases below:
-        # 1. .get_data() makes a large request (i.e. >1 block requests)
-        #    and an error occurs in one of the individual blocks of data
-
-        # 2. .get_data() makes a large request (i.e. >1 block requests) and
-        #    an error does not occur in one of the individual blocks of data
-
-        # 3. .get_data() makes a small request (i.e. 1 request)
-        #    and an error occurs in the data requested
-
-        # 4. .get_data() makes a small request (i.e. 1 request)
-        #    and an error does not occur in the data requested
-
-        # Case 1
-        if (num_request_blocks > 1) and ("error" in json_dict):
-            error_message = json_dict["error"].get(
-                "message", "Error retrieving data"
+    # If the data product is water levels, check that a datum is specified
+    if product == "water_level":
+        if datum is None:
+            raise ValueError(
+                "No datum specified for water level data. See"
+                " https://tidesandcurrents.noaa.gov/api/#datum "
+                "for list of available datums"
             )
-            error_message = error_message.lstrip()
-            error_message = error_message.rstrip()
+        else:
+            # Compile parameter string for use in URL
+            parameters = {
+                "begin_date": begin_date,
+                "end_date": end_date,
+                "product": product,
+                "datum": datum,
+                "units": units,
+                "time_zone": time_zone,
+                "application": application,
+                "format": "json",
+            }
 
-            if error_message == large_data_gap_error:
-                return df  # Return the empty DataFrame
-            else:
-                raise ValueError(
-                    json_dict["error"].get("message", "Error retrieving data")
-                )
+    elif product == "predictions":
+        # If no interval provided, return 6-min predictions data
+        if interval is None:
+            # Compile parameter string for use in URL
+            parameters = {
+                "begin_date": begin_date,
+                "end_date": end_date,
+                "product": product,
+                "datum": datum,
+                "units": units,
+                "time_zone": time_zone,
+                "application": application,
+                "format": "json",
+            }
 
-        # Case 2
-        elif (num_request_blocks > 1) and ("error" not in json_dict):
-            if product == "predictions":
-                key = "predictions"
-            else:
-                key = "data"
+        else:
+            # Compile parameter string, including interval, for use in URL
+            parameters = {
+                "begin_date": begin_date,
+                "end_date": end_date,
+                "product": product,
+                "datum": datum,
+                "interval": interval,
+                "units": units,
+                "time_zone": time_zone,
+                "application": application,
+                "format": "json",
+            }
 
-            df = json_normalize(json_dict[key])  # Parse JSON dict to dataframe
+    # For all other data types (e.g., meteoroligcal conditions)
+    else:
+        # If no interval provided, return 6-min met data
+        if interval is None:
+            # Compile parameter string for use in URL
+            parameters = {
+                "begin_date": begin_date,
+                "end_date": end_date,
+                "product": product,
+                "units": units,
+                "time_zone": time_zone,
+                "application": application,
+                "format": "json",
+            }
+        else:
+            # Compile parameter string, including interval, for use in URL
+            parameters = {
+                "begin_date": begin_date,
+                "end_date": end_date,
+                "product": product,
+                "interval": interval,
+                "units": units,
+                "time_zone": time_zone,
+                "application": application,
+                "format": "json",
+            }
 
-            return df
+    # Build URL with requests library
+    query_url = (
+        requests.Request("GET", base_url, params=parameters).prepare().url
+    )
 
-        # Case 3
-        elif (num_request_blocks == 1) and ("error" in json_dict):
+    return query_url
+
+
+def _parse_known_date_formats(dt_string):
+    """Attempt to parse CO-OPS accepted date formats."""
+    for fmt in ("%Y%m%d", "%Y%m%d %H:%M", "%m/%d/%Y", "%m/%d/%Y %H:%M"):
+        try:
+            return datetime.strptime(dt_string, fmt)
+        except ValueError:
+            pass
+    raise ValueError(
+        "No valid date format found."
+        "See https://tidesandcurrents.noaa.gov/api/ "
+        "for list of accepted date formats."
+    )
+
+
+def get_data(
+        stations_list,
+        begin_date,
+        end_date,
+        product,
+        datum=None,
+        interval=None,
+        units="metric",
+        time_zone="gmt",
+        application='Eugene_Mamontov',
+):
+    """
+    Function to get data from NOAA CO-OPS API and convert it to a pandas
+    dataframe for convenient analysis.
+
+    Info on the NOOA CO-OPS API can be found at:
+    https://tidesandcurrents.noaa.gov/api/
+
+    Arguments listed below generally follow the same (or similar) format.
+
+    Arguments:
+    begin_date -- the starting date of request
+                (yyyyMMdd, yyyyMMdd HH:mm, MM/dd/yyyy,
+                or MM/dd/yyyy HH:mm), string
+    end_date -- the ending date of request
+                (yyyyMMdd, yyyyMMdd HH:mm, MM/dd/yyyy,
+                or MM/dd/yyyy HH:mm), string
+    stationid -- station at which you want data, string
+    product -- the product type you would like, string
+    datum -- datum to be used for water level data, string (default None)
+    bin_num -- bin number you want currents data at, int (default None)
+    interval -- the interval you would like data returned, string
+    units -- units to be used for data output, string (default metric)
+    time_zone -- time zone to be used for data output, string (default gmt)
+    """
+    # Convert dates to datetime objects so deltas can be calculated
+    begin_datetime = _parse_known_date_formats(begin_date)
+    end_datetime = _parse_known_date_formats(end_date)
+    delta = end_datetime - begin_datetime
+
+    # If the length of our data request is less or equal to 31 days,
+    # we can pull the data from API in one request
+    #     data_url = self._build_query_url(
+    #         begin_datetime.strftime("%Y%m%d %H:%M"),
+    #         end_datetime.strftime("%Y%m%d %H:%M"),
+    #         product,
+    #         datum,
+    #         bin_num,
+    #         interval,
+    #         units,
+    #         time_zone,
+    #     )
+
+    df_total = pd.DataFrame()  # Initialize an empty DataFrame
+    json_list = windy_async.get_data_from_noaa(begin_date, end_date, stations_list)
+    for json_dict in json_list:
+        if "error" in json_dict:
             # raise ValueError(
             #     json_dict["error"].get("message", "Error retrieving data")
             # )
-            return df  # Return the empty DataFrame
+            continue  # Return the empty DataFrame
 
-        # Case 4
+        if json_dict == {}:
+            continue
+
+        if product == "predictions":
+            key = "predictions"
         else:
-            if product == "predictions":
-                key = "predictions"
-            else:
-                key = "data"
+            key = "data"
 
-            df = json_normalize(json_dict[key])  # Parse JSON dict to dataframe
-
-            return df
-
-    def _parse_known_date_formats(self, dt_string):
-        """Attempt to parse CO-OPS accepted date formats."""
-        for fmt in ("%Y%m%d", "%Y%m%d %H:%M", "%m/%d/%Y", "%m/%d/%Y %H:%M"):
-            try:
-                return datetime.strptime(dt_string, fmt)
-            except ValueError:
-                pass
-        raise ValueError(
-            "No valid date format found."
-            "See https://tidesandcurrents.noaa.gov/api/ "
-            "for list of accepted date formats."
-        )
-
-    def get_data(
-            self,
-            requests_session,
-            begin_date,
-            end_date,
-            product,
-            datum=None,
-            bin_num=None,
-            interval=None,
-            units="metric",
-            time_zone="gmt",
-            application='Eugene_Mamontov',
-    ):
-        """
-        Function to get data from NOAA CO-OPS API and convert it to a pandas
-        dataframe for convenient analysis.
-
-        Info on the NOOA CO-OPS API can be found at:
-        https://tidesandcurrents.noaa.gov/api/
-
-        Arguments listed below generally follow the same (or similar) format.
-
-        Arguments:
-        begin_date -- the starting date of request
-                    (yyyyMMdd, yyyyMMdd HH:mm, MM/dd/yyyy,
-                    or MM/dd/yyyy HH:mm), string
-        end_date -- the ending date of request
-                    (yyyyMMdd, yyyyMMdd HH:mm, MM/dd/yyyy,
-                    or MM/dd/yyyy HH:mm), string
-        stationid -- station at which you want data, string
-        product -- the product type you would like, string
-        datum -- datum to be used for water level data, string (default None)
-        bin_num -- bin number you want currents data at, int (default None)
-        interval -- the interval you would like data returned, string
-        units -- units to be used for data output, string (default metric)
-        time_zone -- time zone to be used for data output, string (default gmt)
-        """
-        # Convert dates to datetime objects so deltas can be calculated
-        begin_datetime = self._parse_known_date_formats(begin_date)
-        end_datetime = self._parse_known_date_formats(end_date)
-        delta = end_datetime - begin_datetime
-
-        # If the length of our data request is less or equal to 31 days,
-        # we can pull the data from API in one request
-        if delta.days <= 31:
-            data_url = self._build_query_url(
-                begin_datetime.strftime("%Y%m%d %H:%M"),
-                end_datetime.strftime("%Y%m%d %H:%M"),
-                product,
-                datum,
-                bin_num,
-                interval,
-                units,
-                time_zone,
-            )
-
-            df = self._url2pandas(requests_session, data_url, product, num_request_blocks=1)
-
-        # If the length of the user specified data request is greater than 365
-        # days AND the product is hourly_height or high_low, we need to load
-        # data from the API in 365 day blocks.
-
-        # If the length of the user specified data request is greater than 31
-        # days for any other products, we need to load data from the API in 31
-        # day blocks
-        else:
-            # Find the number of 31 day blocks in our desired period,
-            # constrain the upper limit of index in the for loop to follow
-            num_31day_blocks = int(math.floor(delta.days / 31))
-
-            df = pd.DataFrame([])  # Empty dataframe for data from API requests
-
-            # Loop through in 31 day blocks,
-            # adjust the begin_datetime and end_datetime accordingly,
-            # make a request to the NOAA CO-OPS API
-            for i in range(num_31day_blocks + 1):
-                begin_datetime_loop = begin_datetime + timedelta(days=(i * 31))
-                end_datetime_loop = begin_datetime_loop + timedelta(days=31)
-
-                # If end_datetime_loop of the current 31 day block is greater
-                # than end_datetime specified by user, use end_datetime
-                if end_datetime_loop > end_datetime:
-                    end_datetime_loop = end_datetime
-
-                # Build URL for each API request as we proceed through the loop
-                data_url = self._build_query_url(
-                    begin_datetime_loop.strftime("%Y%m%d"),
-                    end_datetime_loop.strftime("%Y%m%d"),
-                    product,
-                    datum,
-                    bin_num,
-                    interval,
-                    units,
-                    time_zone,
-                )
-
-                # Get dataframe for block and append to time series df
-                df_new = self._url2pandas(requests_session, data_url, product, num_31day_blocks)
-                df = df.append(df_new)
-
+        df = json_normalize(json_dict[key])  # Parse JSON dict to dataframe
         if df.empty:
-            return df
+            continue
 
         # Rename output dataframe columns based on requested product
         # and convert to useable data types
@@ -751,5 +396,8 @@ class Station:
             df = df.resample("H").first()  # Only return the hourly data
 
         df.drop_duplicates()  # Handle duplicates due to overlapping requests
-        self.data = df
-        return df
+        df.insert(0, 'station_id', json_dict['station_id'])
+
+        df_total = pd.concat([df_total, df])
+
+    return df_total
