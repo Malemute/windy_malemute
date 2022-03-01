@@ -10,7 +10,7 @@ import noaa_stations
 
 def open_db():
     connection = {'user': 'malemute',
-                  'password': '_Gerai_',
+                  'password': '*****',
                   'host': '127.0.0.1',
                   'port': '3306',
                   'database': 'windy_db'}
