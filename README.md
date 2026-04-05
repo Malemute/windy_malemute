@@ -1,5 +1,5 @@
 # Tide Prophet
-Theese scripts give mesurements and predictions of tide water level from the web service by NOAA.
+Theese scripts give measurements and predictions of tide water level from the web service by NOAA.
 
 # Quickstart
 
